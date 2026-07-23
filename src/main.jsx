@@ -3,10 +3,15 @@ import { createRoot } from 'react-dom/client';
 import {
   ArrowUpRight, Check, CheckCircle2, ChevronDown, CircleUserRound,
   CloudUpload, Eye, EyeOff, FileImage, FileVideo, Hash,
-  KeyRound, LayoutGrid, Menu, MoreHorizontal, Plus, Send, Settings,
+  KeyRound, LayoutGrid, LockKeyhole, LogOut, Mail, Menu, MoreHorizontal, Plus, Send,
   Sparkles, Trash2, Upload, WandSparkles, X, Zap
 } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
 import './styles.css';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 const Youtube = ({ size = 18 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z"/></svg>;
 const Instagram = ({ size = 18 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>;
@@ -27,7 +32,57 @@ function PlatformIcon({ account, size = 18 }) {
   return <span className={`platform-icon ${account.tone}`}><Icon size={size} strokeWidth={2.2} /></span>;
 }
 
+function AuthScreen() {
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async e => {
+    e.preventDefault();
+    setBusy(true); setError(''); setMessage('');
+    if (!supabase) {
+      setError('Authentication is not configured on this deployment.');
+      setBusy(false); return;
+    }
+    const result = mode === 'login'
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({
+          email, password,
+          options: { emailRedirectTo: window.location.origin }
+        });
+    if (result.error) setError(result.error.message);
+    else if (mode === 'signup' && !result.data.session) {
+      setMessage('Check your inbox to confirm your email, then come back to sign in.');
+    }
+    setBusy(false);
+  };
+
+  return <div className="auth-page">
+    <div className="auth-glow one" /><div className="auth-glow two" />
+    <div className="auth-brand"><Brand /><span>Publish with clarity.</span></div>
+    <section className="auth-card">
+      <div className="auth-kicker"><Sparkles size={14}/> Your publishing workspace</div>
+      <h1>{mode === 'login' ? 'Welcome back.' : 'Start your flow.'}</h1>
+      <p>{mode === 'login' ? 'Sign in to create and publish your next post.' : 'Create an account to publish everywhere from one place.'}</p>
+      <form onSubmit={submit}>
+        <label><span>Email address</span><div><Mail size={17}/><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com"/></div></label>
+        <label><span>Password</span><div><LockKeyhole size={17}/><input type="password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 6 characters"/></div></label>
+        {error && <div className="auth-alert error">{error}</div>}
+        {message && <div className="auth-alert success"><CheckCircle2 size={15}/>{message}</div>}
+        <button className="auth-submit" disabled={busy}>{busy ? <><span className="spinner"/> Please wait…</> : mode === 'login' ? 'Sign in to Social Flow' : 'Create my account'}</button>
+      </form>
+      <div className="auth-switch">{mode === 'login' ? "New to Social Flow?" : 'Already have an account?'} <button onClick={() => {setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setMessage('')}}>{mode === 'login' ? 'Create account' : 'Sign in'}</button></div>
+      <small className="auth-secure"><KeyRound size={13}/> Secured by encrypted authentication</small>
+    </section>
+  </div>;
+}
+
 function App() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState('create');
   const [selected, setSelected] = useState(['youtube', 'instagram', 'x']);
   const [file, setFile] = useState(null);
@@ -42,6 +97,19 @@ function App() {
   const [showKey, setShowKey] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const inputRef = useRef();
+
+  useEffect(() => {
+    if (!supabase) { setAuthLoading(false); return; }
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!publishing) return;
@@ -81,6 +149,12 @@ function App() {
     { id: 'ai', label: 'AI settings', icon: Sparkles },
   ];
 
+  if (authLoading) return <div className="auth-loader"><div className="brand-mark"><span/><span/><span/></div><div className="spinner"/></div>;
+  if (!session) return <AuthScreen />;
+
+  const userEmail = session.user.email || 'Signed in user';
+  const userInitial = userEmail.charAt(0).toUpperCase();
+
   return (
     <div className="app-shell">
       <aside className={mobileNav ? 'sidebar open' : 'sidebar'}>
@@ -91,7 +165,7 @@ function App() {
         </nav>
         <div className="sidebar-foot">
           <div className="pro-card"><div className="mini-spark"><Zap size={15}/></div><b>Posting made simple.</b><p>Four platforms. One calm workspace.</p></div>
-          <button className="user-row"><span className="avatar">Y</span><span><b>Yasin</b><small>Personal workspace</small></span><MoreHorizontal size={18}/></button>
+          <button className="user-row" title="Sign out" onClick={() => supabase?.auth.signOut()}><span className="avatar">{userInitial}</span><span><b>{userEmail.split('@')[0]}</b><small>{userEmail}</small></span><LogOut size={17}/></button>
         </div>
       </aside>
       {mobileNav && <div className="scrim" onClick={() => setMobileNav(false)} />}
