@@ -9,7 +9,6 @@ import { exchangeGoogleCode, getYouTubeChannel, youtubeAuthorizationUrl } from '
 
 const required = [
   'FRONTEND_URL', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY',
-  'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI',
   'TOKEN_ENCRYPTION_KEY', 'STATE_SIGNING_SECRET'
 ];
 const missing = required.filter(name => !process.env[name]);
@@ -47,6 +46,9 @@ app.get('/api/connections', requireUser, async (req, res) => {
 });
 
 app.post('/api/oauth/youtube/start', requireUser, (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REDIRECT_URI) {
+    return res.status(503).json({ error: 'YouTube OAuth is not configured yet' });
+  }
   const state = signState({
     userId: req.user.id,
     nonce: crypto.randomUUID(),
@@ -58,6 +60,9 @@ app.post('/api/oauth/youtube/start', requireUser, (req, res) => {
 app.get('/api/oauth/youtube/callback', async (req, res) => {
   const returnUrl = new URL(process.env.FRONTEND_URL);
   try {
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REDIRECT_URI) {
+      throw new Error('YouTube OAuth is not configured yet');
+    }
     if (req.query.error) throw new Error(String(req.query.error_description || req.query.error));
     const state = verifyState(req.query.state);
     const tokens = await exchangeGoogleCode(String(req.query.code || ''));
