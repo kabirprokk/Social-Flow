@@ -34,6 +34,11 @@ async function requireUser(req, res, next) {
   next();
 }
 
+app.get('/', (_req, res) => res.json({
+  ok: true,
+  service: 'social-flow-api',
+  message: 'Social Flow API is running. Open the frontend application to use Social Flow.'
+}));
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'social-flow-api' }));
 
 app.get('/api/connections', requireUser, async (req, res) => {
