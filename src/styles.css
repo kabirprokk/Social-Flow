@@ -87,6 +87,7 @@ main{background:transparent}
 .page-icon.ai{background:#2c3019;color:#dfff69;border-color:#464d27}
 .account-list{background:#101814}.account-row small{color:#7f8c85}
 .connected{color:#65eca6;background:#153426}
+.not-connected{font-size:9px;color:#87938d;background:#1b2520;padding:5px 8px;border-radius:20px}.account-row button:disabled{opacity:.45;cursor:not-allowed}.connection-banner{font-size:10px;color:#ffb0ad;background:#351c1c;border:1px solid #653331;border-radius:10px;padding:10px 12px;margin-bottom:12px}.connection-banner.success{color:#8df0b5;background:#153425;border-color:#2c6344}
 .connect-new{color:#69eca8}
 .notice{background:#121d18;border:1px solid #28372f;color:#8ea097}.notice b{color:#e8f0eb}
 .ai-status{color:#77847d}.ai-status.on{color:#68eaa6}

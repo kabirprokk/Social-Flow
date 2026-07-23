@@ -11,6 +11,7 @@ import './styles.css';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const apiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '');
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 const Youtube = ({ size = 18 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z"/></svg>;
@@ -96,6 +97,9 @@ function App() {
   const [savedKey, setSavedKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [connections, setConnections] = useState([]);
+  const [connectionBusy, setConnectionBusy] = useState('');
+  const [connectionMessage, setConnectionMessage] = useState('');
   const inputRef = useRef();
 
   useEffect(() => {
@@ -110,6 +114,29 @@ function App() {
     });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session || !apiUrl) return;
+    const loadConnections = async () => {
+      const response = await fetch(`${apiUrl}/api/connections`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setConnections(data.connections || []);
+      }
+    };
+    loadConnections();
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected')) {
+      setConnectionMessage('YouTube connected successfully.');
+      window.history.replaceState({}, '', window.location.pathname);
+      setTimeout(loadConnections, 300);
+    } else if (params.get('oauth_error')) {
+      setConnectionMessage(`Connection failed: ${params.get('oauth_error')}`);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [session]);
 
   useEffect(() => {
     if (!publishing) return;
@@ -141,6 +168,26 @@ function App() {
     setCaption("Give your best ideas the space they deserve. Quiet the noise, stay curious, and let meaningful work take root. 🌿");
     setHashtags('#CreativeGrowth #MindfulWork #IdeasThatMatter #StayCurious');
     setTitle('Give your best ideas room to grow');
+  };
+  const connectYoutube = async () => {
+    if (!apiUrl) {
+      setConnectionMessage('The secure API is not configured yet.');
+      return;
+    }
+    setConnectionBusy('youtube');
+    setConnectionMessage('');
+    try {
+      const response = await fetch(`${apiUrl}/api/oauth/youtube/start`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to start connection');
+      window.location.assign(data.url);
+    } catch (error) {
+      setConnectionMessage(error.message);
+      setConnectionBusy('');
+    }
   };
 
   const nav = [
@@ -220,7 +267,11 @@ function App() {
           </div>
         )}
 
-        {view === 'accounts' && <div className="page narrow-page"><div className="settings-intro"><span className="page-icon"><LayoutGrid/></span><h2>Your connected accounts</h2><p>Connect and manage the places where you publish.</p></div><div className="account-list card">{ACCOUNTS.map(a => <div className="account-row" key={a.id}><PlatformIcon account={a} size={20}/><div><b>{a.name}</b><small>{a.handle}</small></div><span className="connected"><i/> Connected</span><button>Manage <ChevronDown size={14}/></button></div>)}<button className="connect-new"><Plus size={17}/> Connect another account</button></div><div className="notice"><KeyRound size={17}/><p><b>Secure connections</b><br/>Social Flow uses OAuth. Your platform passwords are never seen or stored.</p></div></div>}
+        {view === 'accounts' && <div className="page narrow-page"><div className="settings-intro"><span className="page-icon"><LayoutGrid/></span><h2>Your connected accounts</h2><p>Connect and manage the places where you publish.</p></div>{connectionMessage && <div className={connectionMessage.includes('successfully') ? 'connection-banner success' : 'connection-banner'}>{connectionMessage}</div>}<div className="account-list card">{ACCOUNTS.map(a => {
+          const connection = connections.find(c => c.platform === a.id);
+          const available = a.id === 'youtube';
+          return <div className="account-row" key={a.id}><PlatformIcon account={a} size={20}/><div><b>{a.name}</b><small>{connection?.account_name || (available ? 'Connect your channel' : 'Integration coming next')}</small></div>{connection ? <span className="connected"><i/> Connected</span> : <span className="not-connected">{available ? 'Not connected' : 'Coming soon'}</span>}<button disabled={!available || connectionBusy === a.id} onClick={available && !connection ? connectYoutube : undefined}>{connectionBusy === a.id ? 'Opening…' : connection ? 'Connected' : available ? 'Connect' : 'Unavailable'}</button></div>
+        })}</div><div className="notice"><KeyRound size={17}/><p><b>Secure connections</b><br/>Social Flow uses OAuth. Your platform passwords are never seen or stored.</p></div></div>}
 
         {view === 'ai' && <div className="page narrow-page"><div className="settings-intro"><span className="page-icon ai"><Sparkles/></span><span className={savedKey ? 'ai-status on' : 'ai-status'}><i/>{savedKey ? 'AI enabled' : 'AI disabled'}</span><h2>Optional AI assistance</h2><p>Bring your own API key for better captions, titles, and hashtags. Social Flow works perfectly without it.</p></div><div className="ai-settings card"><label className="field"><span>Provider</span><div className="select-look">OpenAI compatible <ChevronDown size={16}/></div></label><label className="field"><span>API key</span><div className="key-input"><KeyRound size={16}/><input type={showKey ? 'text' : 'password'} placeholder="Paste your API key" value={aiKey} onChange={e => setAiKey(e.target.value)}/><button onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={17}/> : <Eye size={17}/>}</button></div></label><p className="privacy-copy">Your key is encrypted before storage and is only used for requests you initiate.</p><button className="save-button" disabled={!aiKey} onClick={() => setSavedKey(true)}>{savedKey ? <><Check size={16}/> Settings saved</> : 'Save AI settings'}</button></div><div className="capabilities"><p>When enabled, AI can help with</p><div><span><Check/> Caption improvement</span><span><Check/> Hashtag suggestions</span><span><Check/> Title suggestions</span><span><Check/> Grammar correction</span></div></div></div>}
       </main>
