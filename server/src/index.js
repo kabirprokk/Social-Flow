@@ -83,16 +83,21 @@ async function processYouTubeUpload(job, connection, files, fields) {
       },
       onProgress: progress => { job.progress = progress; }
     });
+    job.videoId = video.id;
+    job.url = `https://www.youtube.com/watch?v=${video.id}`;
     if (files.thumbnail?.[0]) {
       job.state = 'processing';
       job.message = 'Setting custom thumbnail';
-      await uploadThumbnail(accessToken, video.id, files.thumbnail[0]);
+      try {
+        await uploadThumbnail(accessToken, video.id, files.thumbnail[0]);
+      } catch (error) {
+        console.warn('YouTube thumbnail skipped:', error.message);
+        job.warning = `Video published, but YouTube rejected the custom thumbnail: ${error.message}`;
+      }
     }
     job.state = 'completed';
     job.progress = 100;
-    job.message = 'Published to YouTube';
-    job.videoId = video.id;
-    job.url = `https://www.youtube.com/watch?v=${video.id}`;
+    job.message = job.warning || 'Published to YouTube';
     job.completedAt = Date.now();
   } catch (error) {
     console.error('YouTube upload failed:', error.message);

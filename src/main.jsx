@@ -184,7 +184,8 @@ function App() {
           progress: Math.max(30, Math.round(30 + job.progress * .7)),
           state: job.state === 'completed' ? 'published' : job.state,
           message: job.message,
-          url: job.url
+          url: job.url,
+          warning: job.warning
         }
       }));
       if (job.state === 'completed') return job;
@@ -309,7 +310,7 @@ function App() {
                 <div className="summary card"><div className="summary-head"><div><h3>Ready to publish?</h3><p>{selected.length} destination{selected.length !== 1 ? 's' : ''} selected</p></div><Send size={20}/></div>
                   <div className="destination-list">{selected.length ? ACCOUNTS.filter(a => selected.includes(a.id)).map(a => {
                     const r = results[a.id];
-                    return <React.Fragment key={a.id}><div className="destination"><PlatformIcon account={a} size={15}/><div><b>{a.name}</b>{r && <span className="progress-track"><i className={r.state === 'failed' ? 'failed' : ''} style={{width: `${r.state === 'failed' ? 100 : r.progress}%`}} /></span>}</div><small title={r?.message || ''} className={r?.state || ''}>{r ? (r.state === 'published' ? 'Published' : r.state === 'failed' ? 'Failed' : `${r.progress}%`) : 'Ready'}</small></div>{r?.url && <a className="result-link" href={r.url} target="_blank" rel="noreferrer">View published video <ArrowUpRight size={12}/></a>}{r?.state === 'failed' && <p className="result-error">{r.message}</p>}</React.Fragment>
+                    return <React.Fragment key={a.id}><div className="destination"><PlatformIcon account={a} size={15}/><div><b>{a.name}</b>{r && <span className="progress-track"><i className={r.state === 'failed' ? 'failed' : ''} style={{width: `${r.state === 'failed' ? 100 : r.progress}%`}} /></span>}</div><small title={r?.message || ''} className={r?.state || ''}>{r ? (r.state === 'published' ? 'Published' : r.state === 'failed' ? 'Failed' : `${r.progress}%`) : 'Ready'}</small></div>{r?.url && <a className="result-link" href={r.url} target="_blank" rel="noreferrer">View published video <ArrowUpRight size={12}/></a>}{r?.warning && <p className="result-warning">{r.warning}</p>}{r?.state === 'failed' && <p className="result-error">{r.message}</p>}</React.Fragment>
                   }) : <div className="empty-state">Choose at least one destination</div>}</div>
                   <button className="publish-button" disabled={!selected.length || publishing || !file} onClick={publishEverywhere}>{publishing ? <><span className="spinner"/> Publishing…</> : <><Upload size={17}/> Publish selected</>}</button>
                   <p className="secure-note"><CheckCircle2 size={13}/> Posted securely to each platform</p>

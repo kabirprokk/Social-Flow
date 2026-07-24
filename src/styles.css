@@ -80,6 +80,7 @@ main{background:transparent}
 .destination>small,.empty-state{color:#7c8a83}
 .progress-track{background:#28342e}.progress-track i{background:linear-gradient(90deg,#24b96e,#caff55)}
 .progress-track i.failed{background:#e05b62}.destination>small.failed{color:#ff858a}.result-link{display:flex;align-items:center;justify-content:flex-end;gap:3px;color:#8ff0b8;font-size:9px;text-decoration:none;margin:-2px 0 7px}.result-error{font-size:8px;line-height:1.4;color:#df8488;margin:-2px 0 7px 34px}
+.result-warning{font-size:8px;line-height:1.4;color:#d6c86c;margin:-2px 0 7px 34px}
 .publish-button,.save-button{background:linear-gradient(135deg,#caff55,#78eb6c);color:#102017;box-shadow:0 8px 25px #a8f55824}
 .publish-button:hover,.save-button:hover{filter:brightness(1.08);transform:translateY(-1px)}
 .secure-note{color:#68776f}
