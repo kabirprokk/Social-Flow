@@ -152,6 +152,10 @@ app.post('/api/youtube/uploads', requireUser, upload.fields([
     await removeUploadFiles(req.files);
     return res.status(400).json({ error: 'A YouTube title is required' });
   }
+  if (!String(req.body.connection_id || '').trim()) {
+    await removeUploadFiles(req.files);
+    return res.status(400).json({ error: 'Select the YouTube account that should receive this video' });
+  }
   const thumbnail = req.files?.thumbnail?.[0];
   if (thumbnail && (!thumbnail.mimetype.startsWith('image/') || thumbnail.size > 2 * 1024 * 1024)) {
     await removeUploadFiles(req.files);
@@ -161,9 +165,9 @@ app.post('/api/youtube/uploads', requireUser, upload.fields([
   const { data: connection, error } = await supabase
     .from('platform_connections')
     .select('*')
+    .eq('id', req.body.connection_id)
     .eq('user_id', req.user.id)
     .eq('platform', 'youtube')
-    .limit(1)
     .maybeSingle();
   if (error || !connection) {
     await removeUploadFiles(req.files);
@@ -223,6 +227,10 @@ app.post('/api/x/posts', requireUser, upload.single('media'), async (req, res) =
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: 'Post text is required' });
   }
+  if (!String(req.body.connection_id || '').trim()) {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: 'Select the X account that should publish this post' });
+  }
   if (Array.from(text).length > 280) {
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: 'X post text must be 280 characters or fewer' });
@@ -240,9 +248,9 @@ app.post('/api/x/posts', requireUser, upload.single('media'), async (req, res) =
   const { data: connection, error } = await supabase
     .from('platform_connections')
     .select('*')
+    .eq('id', req.body.connection_id)
     .eq('user_id', req.user.id)
     .eq('platform', 'x')
-    .limit(1)
     .maybeSingle();
   if (error || !connection) {
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});

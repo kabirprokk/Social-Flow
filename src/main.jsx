@@ -91,6 +91,7 @@ function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState('create');
   const [selected, setSelected] = useState([]);
+  const [selectedAccountIds, setSelectedAccountIds] = useState({});
   const [file, setFile] = useState(null);
   const [drag, setDrag] = useState(false);
   const [caption, setCaption] = useState(() => readDraft().caption ?? '');
@@ -108,6 +109,7 @@ function App() {
   const [connectionBusy, setConnectionBusy] = useState('');
   const [connectionMessage, setConnectionMessage] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false);
   const [draftSaved, setDraftSaved] = useState(true);
   const [systemOnline, setSystemOnline] = useState(null);
   const inputRef = useRef();
@@ -134,7 +136,10 @@ function App() {
       });
       if (response.ok) {
         const data = await response.json();
-        setConnections(data.connections || []);
+        const items = data.connections || [];
+        setConnections(items);
+        const pickerKey = `social-flow-account-picker:${session.user.id}`;
+        if (!sessionStorage.getItem(pickerKey)) setAccountPickerOpen(true);
       }
     };
     loadConnections();
@@ -167,15 +172,51 @@ function App() {
   }, [title, caption, hashtags, privacy]);
 
   const toggle = id => {
-    const connection = connections.find(item => item.platform === id);
-    if (!LIVE_PLATFORMS.includes(id) || !connection) {
+    const platformConnections = connections.filter(item => item.platform === id);
+    if (!LIVE_PLATFORMS.includes(id) || !platformConnections.length) {
       setConnectionMessage(LIVE_PLATFORMS.includes(id)
         ? `Connect ${id === 'x' ? 'X' : 'YouTube'} before selecting it.`
         : `${id === 'instagram' ? 'Instagram' : 'Facebook'} integration is not configured yet.`);
       setView('accounts');
       return;
     }
-    setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+    if (selected.includes(id)) {
+      setSelected(items => items.filter(item => item !== id));
+      setSelectedAccountIds(items => {
+        const next = { ...items };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+    if (platformConnections.length > 1) {
+      setAccountPickerOpen(true);
+      return;
+    }
+    setSelected(items => [...items, id]);
+    setSelectedAccountIds(items => ({ ...items, [id]: platformConnections[0].id }));
+  };
+  const chooseConnectedAccount = connection => {
+    setSelectedAccountIds(items => ({ ...items, [connection.platform]: connection.id }));
+    setSelected(items => items.includes(connection.platform) ? items : [...items, connection.platform]);
+  };
+  const confirmAccountSelection = () => {
+    sessionStorage.setItem(`social-flow-account-picker:${session.user.id}`, '1');
+    setAccountPickerOpen(false);
+  };
+  const selectConnectedAccounts = () => {
+    if (selected.length === connectedLiveAccounts.length) {
+      setSelected([]);
+      setSelectedAccountIds({});
+      return;
+    }
+    const ids = {};
+    connectedLiveAccounts.forEach(account => {
+      ids[account.id] = selectedAccountIds[account.id]
+        || connections.find(connection => connection.platform === account.id)?.id;
+    });
+    setSelected(connectedLiveAccounts.map(account => account.id));
+    setSelectedAccountIds(ids);
   };
   const loadFile = f => f && setFile({ raw: f, name: f.name, size: `${(f.size / 1024 / 1024).toFixed(1)} MB`, type: f.type, url: f.type.startsWith('image') ? URL.createObjectURL(f) : null });
   const improve = () => {
@@ -217,6 +258,11 @@ function App() {
       if (!response.ok) throw new Error(data.error || 'Unable to disconnect account');
       setConnections(items => items.filter(item => item.id !== connection.id));
       setSelected(items => items.filter(id => id !== connection.platform));
+      setSelectedAccountIds(items => {
+        const next = { ...items };
+        if (next[connection.platform] === connection.id) delete next[connection.platform];
+        return next;
+      });
       setConnectionMessage(`${connection.platform === 'x' ? 'X' : 'YouTube'} disconnected.`);
     } catch (error) {
       setConnectionMessage(error.message);
@@ -255,6 +301,7 @@ function App() {
     form.append('description', `${caption}\n\n${hashtags}`.trim());
     form.append('tags', hashtags);
     form.append('privacy', privacy);
+    form.append('connection_id', selectedAccountIds.youtube || '');
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${apiUrl}/api/youtube/uploads`);
     xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
@@ -301,6 +348,7 @@ function App() {
     const form = new FormData();
     if (file?.raw) form.append('media', file.raw);
     form.append('text', `${caption}\n\n${hashtags}`.trim());
+    form.append('connection_id', selectedAccountIds.x || '');
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${apiUrl}/api/x/posts`);
     xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
@@ -335,7 +383,7 @@ function App() {
         tasks.push((async () => {
           try {
             if (!file?.raw || !file.type.startsWith('video/')) throw new Error('YouTube publishing requires a video file');
-            if (!connections.some(c => c.platform === 'youtube')) throw new Error('Connect a YouTube channel first');
+            if (!selectedAccountIds.youtube) throw new Error('Select the YouTube channel that should receive this video');
             await uploadToYouTube();
           } catch (error) {
             setResults(current => ({ ...current, youtube: { ...(current.youtube || {}), state: 'failed', message: error.message } }));
@@ -348,7 +396,7 @@ function App() {
             const xText = `${caption}\n\n${hashtags}`.trim();
             if (!xText) throw new Error('Write some text before publishing to X');
             if (Array.from(xText).length > 280) throw new Error(`X post is ${Array.from(xText).length} characters; the limit is 280`);
-            if (!connections.some(c => c.platform === 'x')) throw new Error('Connect an X account first');
+            if (!selectedAccountIds.x) throw new Error('Select the X account that should publish this post');
             await uploadToX();
           } catch (error) {
             setResults(current => ({ ...current, x: { ...(current.x || {}), state: 'failed', message: error.message } }));
@@ -382,7 +430,13 @@ function App() {
   const connectedLiveAccounts = ACCOUNTS.filter(account =>
     LIVE_PLATFORMS.includes(account.id) && connections.some(connection => connection.platform === account.id)
   );
+  const selectedConnectionFor = platform =>
+    connections.find(connection => connection.id === selectedAccountIds[platform]);
   const xPostLength = Array.from(`${caption}\n\n${hashtags}`.trim()).length;
+  const signOut = async () => {
+    sessionStorage.removeItem(`social-flow-account-picker:${session.user.id}`);
+    await supabase?.auth.signOut();
+  };
 
   return (
     <div className="app-shell">
@@ -394,7 +448,7 @@ function App() {
         </nav>
         <div className="sidebar-foot">
           <div className="pro-card"><div className="mini-spark"><Zap size={15}/></div><b>Posting made simple.</b><p>Four platforms. One calm workspace.</p></div>
-          <button className="user-row" title="Sign out" onClick={() => supabase?.auth.signOut()}><span className="avatar">{userInitial}</span><span><b>{userEmail.split('@')[0]}</b><small>{userEmail}</small></span><LogOut size={17}/></button>
+          <button className="user-row" title="Sign out" onClick={signOut}><span className="avatar">{userInitial}</span><span><b>{userEmail.split('@')[0]}</b><small>{userEmail}</small></span><LogOut size={17}/></button>
         </div>
       </aside>
       {mobileNav && <div className="scrim" onClick={() => setMobileNav(false)} />}
@@ -411,12 +465,13 @@ function App() {
             <div className="intro"><div><h2>Share something <em>worth seeing.</em></h2><p>Create once, publish to every connected destination.</p></div><span className={draftSaved ? 'draft-state saved' : 'draft-state'}>{draftSaved ? <Check size={14}/> : <span className="mini-spinner"/>} {draftSaved ? 'Draft saved locally' : 'Saving draft…'}</span></div>
             <div className="composer-grid">
               <section className="card compose-card">
-                <div className="section-head"><span className="step">1</span><div><h3>Choose destinations</h3><p>Only connected accounts can be selected</p></div>{connectedLiveAccounts.length > 0 && <button className="text-button" onClick={() => setSelected(selected.length === connectedLiveAccounts.length ? [] : connectedLiveAccounts.map(a => a.id))}>{selected.length === connectedLiveAccounts.length ? 'Clear' : 'Select connected'}</button>}</div>
+                <div className="section-head"><span className="step">1</span><div><h3>Choose connected accounts</h3><p>Select the exact account that should publish</p></div>{connectedLiveAccounts.length > 0 && <button className="text-button" onClick={selectConnectedAccounts}>{selected.length === connectedLiveAccounts.length ? 'Clear' : 'Select connected'}</button>}</div>
                 <div className="account-grid">
                   {ACCOUNTS.map(a => {
                     const connection = connections.find(item => item.platform === a.id);
                     const live = LIVE_PLATFORMS.includes(a.id);
-                    return <button key={a.id} className={`${selected.includes(a.id) ? 'account-option selected' : 'account-option'} ${!connection || !live ? 'unavailable' : ''}`} onClick={() => toggle(a.id)}><PlatformIcon account={a}/><span><b>{a.name}</b><small>{connection?.account_name || (live ? 'Connect account first' : 'Coming later')}</small></span>{connection && live ? <i className="check">{selected.includes(a.id) && <Check size={13}/>}</i> : <i className="lock-state">{live ? <Link2 size={13}/> : 'Soon'}</i>}</button>
+                    const chosen = selectedConnectionFor(a.id);
+                    return <button key={a.id} className={`${selected.includes(a.id) ? 'account-option selected' : 'account-option'} ${!connection || !live ? 'unavailable' : ''}`} onClick={() => toggle(a.id)}><PlatformIcon account={a}/><span><b>{a.name}</b><small>{chosen?.account_name || connection?.account_name || (live ? 'Connect account first' : 'Coming later')}</small></span>{connection && live ? <i className="check">{selected.includes(a.id) && <Check size={13}/>}</i> : <i className="lock-state">{live ? <Link2 size={13}/> : 'Soon'}</i>}</button>
                   })}
                 </div>
 
@@ -443,7 +498,8 @@ function App() {
                 <div className="summary card"><div className="summary-head"><div><h3>Ready to publish?</h3><p>{selected.length} destination{selected.length !== 1 ? 's' : ''} selected</p></div><Send size={20}/></div>
                   <div className="destination-list">{selected.length ? ACCOUNTS.filter(a => selected.includes(a.id)).map(a => {
                     const r = results[a.id];
-                    return <React.Fragment key={a.id}><div className="destination"><PlatformIcon account={a} size={15}/><div><b>{a.name}</b>{r && <span className="progress-track"><i className={r.state === 'failed' ? 'failed' : ''} style={{width: `${r.state === 'failed' ? 100 : r.progress}%`}} /></span>}</div><small title={r?.message || ''} className={r?.state || ''}>{r ? (r.state === 'published' ? 'Published' : r.state === 'failed' ? 'Failed' : r.state === 'processing' ? 'Processing' : `${r.progress}%`) : 'Ready'}</small></div>{r?.url && <a className="result-link" href={r.url} target="_blank" rel="noreferrer">View on {a.name} <ArrowUpRight size={12}/></a>}{r?.warning && <p className="result-warning">{r.warning}</p>}{r?.state === 'failed' && <p className="result-error">{r.message}</p>}</React.Fragment>
+                    const chosen = selectedConnectionFor(a.id);
+                    return <React.Fragment key={a.id}><div className="destination"><PlatformIcon account={a} size={15}/><div><b>{chosen?.account_name || a.name}</b><small>{a.name}</small>{r && <span className="progress-track"><i className={r.state === 'failed' ? 'failed' : ''} style={{width: `${r.state === 'failed' ? 100 : r.progress}%`}} /></span>}</div><small title={r?.message || ''} className={r?.state || ''}>{r ? (r.state === 'published' ? 'Published' : r.state === 'failed' ? 'Failed' : r.state === 'processing' ? 'Processing' : `${r.progress}%`) : 'Ready'}</small></div>{r?.url && <a className="result-link" href={r.url} target="_blank" rel="noreferrer">View on {a.name} <ArrowUpRight size={12}/></a>}{r?.warning && <p className="result-warning">{r.warning}</p>}{r?.state === 'failed' && <p className="result-error">{r.message}</p>}</React.Fragment>
                   }) : <div className="empty-state">Choose at least one destination</div>}</div>
                   <button className="publish-button" disabled={!selected.length || publishing || (!file && !selected.includes('x'))} onClick={publishEverywhere}>{publishing ? <><span className="spinner"/> Publishing…</> : <><Upload size={17}/> Publish selected</>}</button>
                   <p className="secure-note"><ShieldCheck size={13}/> OAuth-secured publishing to each platform</p>
@@ -454,14 +510,33 @@ function App() {
           </div>
         )}
 
-        {view === 'accounts' && <div className="page narrow-page"><div className="settings-intro"><span className="page-icon"><LayoutGrid/></span><h2>Your connected accounts</h2><p>Connect and manage the places where you publish.</p></div>{connectionMessage && <div className={connectionMessage.includes('successfully') ? 'connection-banner success' : 'connection-banner'}>{connectionMessage}</div>}<div className="account-list card">{ACCOUNTS.map(a => {
-          const connection = connections.find(c => c.platform === a.id);
-          const available = ['youtube', 'x'].includes(a.id);
-          return <div className="account-row" key={a.id}><PlatformIcon account={a} size={20}/><div><b>{a.name}</b><small>{connection?.account_name || (available ? `Connect your ${a.id === 'x' ? 'account' : 'channel'}` : 'Integration coming later')}</small></div>{connection ? <span className="connected"><i/> Connected</span> : <span className="not-connected">{available ? 'Not connected' : 'Coming later'}</span>}<button className={connection ? 'danger-action' : ''} disabled={!available || connectionBusy === a.id} onClick={available ? () => connection ? disconnectPlatform(connection) : connectPlatform(a.id) : undefined}>{connectionBusy === a.id ? 'Working…' : connection ? 'Disconnect' : available ? 'Connect' : 'Unavailable'}</button></div>
-        })}</div><div className="notice"><KeyRound size={17}/><p><b>Secure connections</b><br/>Social Flow uses OAuth. Your platform passwords are never seen or stored.</p></div></div>}
+        {view === 'accounts' && <div className="page narrow-page"><div className="settings-intro"><span className="page-icon"><LayoutGrid/></span><h2>Your connected accounts</h2><p>Every account below belongs only to <b>{userEmail}</b>.</p></div>{connectionMessage && <div className={connectionMessage.includes('successfully') || connectionMessage.includes('disconnected') ? 'connection-banner success' : 'connection-banner'}>{connectionMessage}</div>}<div className="account-list card">
+          {connections.map(connection => {
+            const account = ACCOUNTS.find(item => item.id === connection.platform);
+            if (!account) return null;
+            return <div className="account-row" key={connection.id}><PlatformIcon account={account} size={20}/><div><b>{connection.account_name}</b><small>{account.name} · Connected to this Social Flow login</small></div><span className="connected"><i/> Connected</span><button className="danger-action" disabled={connectionBusy === connection.platform} onClick={() => disconnectPlatform(connection)}>{connectionBusy === connection.platform ? 'Working…' : 'Disconnect'}</button></div>
+          })}
+          {LIVE_PLATFORMS.filter(platform => !connections.some(connection => connection.platform === platform)).map(platform => {
+            const account = ACCOUNTS.find(item => item.id === platform);
+            return <div className="account-row" key={platform}><PlatformIcon account={account} size={20}/><div><b>{account.name}</b><small>Connect another publishing account</small></div><span className="not-connected">Not connected</span><button disabled={connectionBusy === platform} onClick={() => connectPlatform(platform)}>{connectionBusy === platform ? 'Opening…' : 'Connect'}</button></div>
+          })}
+          {LIVE_PLATFORMS.filter(platform => connections.some(connection => connection.platform === platform)).map(platform => {
+            const account = ACCOUNTS.find(item => item.id === platform);
+            return <button className="connect-new" key={`more-${platform}`} disabled={!!connectionBusy} onClick={() => connectPlatform(platform)}><Plus size={16}/> Connect another {account.name} account</button>
+          })}
+          {ACCOUNTS.filter(account => !LIVE_PLATFORMS.includes(account.id)).map(account => <div className="account-row disabled-row" key={account.id}><PlatformIcon account={account} size={20}/><div><b>{account.name}</b><small>Integration coming later</small></div><span className="not-connected">Unavailable</span><button disabled>Coming later</button></div>)}
+        </div><div className="notice"><KeyRound size={17}/><p><b>User-scoped connections</b><br/>Accounts are stored against your signed-in user ID. Other Social Flow users cannot see or publish to them.</p></div></div>}
 
         {view === 'ai' && <div className="page narrow-page"><div className="settings-intro"><span className="page-icon ai"><Sparkles/></span><span className={savedKey ? 'ai-status on' : 'ai-status'}><i/>{savedKey ? 'AI enabled' : 'AI disabled'}</span><h2>Optional AI assistance</h2><p>Bring your own API key for better captions, titles, and hashtags. Social Flow works perfectly without it.</p></div><div className="ai-settings card"><label className="field"><span>Provider</span><div className="select-look">OpenAI compatible <ChevronDown size={16}/></div></label><label className="field"><span>API key</span><div className="key-input"><KeyRound size={16}/><input type={showKey ? 'text' : 'password'} placeholder="Paste your API key" value={aiKey} onChange={e => setAiKey(e.target.value)}/><button onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={17}/> : <Eye size={17}/>}</button></div></label><p className="privacy-copy">Your key is encrypted before storage and is only used for requests you initiate.</p><button className="save-button" disabled={!aiKey} onClick={() => setSavedKey(true)}>{savedKey ? <><Check size={16}/> Settings saved</> : 'Save AI settings'}</button></div><div className="capabilities"><p>When enabled, AI can help with</p><div><span><Check/> Caption improvement</span><span><Check/> Hashtag suggestions</span><span><Check/> Title suggestions</span><span><Check/> Grammar correction</span></div></div></div>}
       </main>
+      {accountPickerOpen && <div className="modal-backdrop"><section className="help-modal account-picker"><span className="page-icon"><CircleUserRound size={21}/></span><h2>Choose publishing accounts</h2><p>Signed in as <b>{userEmail}</b>. Choose one connected account per platform. We’ll ask again after your next sign-in.</p>
+        <div className="picker-groups">{LIVE_PLATFORMS.map(platform => {
+          const account = ACCOUNTS.find(item => item.id === platform);
+          const options = connections.filter(connection => connection.platform === platform);
+          return <div className="picker-group" key={platform}><div className="picker-label"><PlatformIcon account={account} size={15}/><span>{account.name}</span><small>{options.length} connected</small></div>{options.length ? options.map(connection => <button key={connection.id} className={selectedAccountIds[platform] === connection.id ? 'picker-account selected' : 'picker-account'} onClick={() => chooseConnectedAccount(connection)}><span className="avatar small">{connection.account_name.charAt(0).toUpperCase()}</span><span><b>{connection.account_name}</b><small>{account.name} account</small></span><i>{selectedAccountIds[platform] === connection.id && <Check size={14}/>}</i></button>) : <button className="picker-empty" onClick={() => {setAccountPickerOpen(false); setView('accounts')}}><Plus size={15}/> Connect {account.name}</button>}</div>
+        })}</div>
+        <div className="picker-actions"><button className="secondary-button" onClick={() => {sessionStorage.setItem(`social-flow-account-picker:${session.user.id}`, '1'); setAccountPickerOpen(false)}}>Not now</button><button className="publish-button" disabled={!selected.length} onClick={confirmAccountSelection}><Check size={16}/> Use {selected.length} account{selected.length === 1 ? '' : 's'}</button></div>
+      </section></div>}
       {helpOpen && <div className="modal-backdrop" onClick={() => setHelpOpen(false)}><section className="help-modal" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={() => setHelpOpen(false)}><X size={18}/></button><span className="page-icon"><Info size={21}/></span><h2>How Social Flow works</h2><p>Connect an account, select its destination, prepare platform-specific content, then publish. Each platform reports progress and errors independently.</p><div className="help-grid"><div><Youtube size={18}/><span><b>YouTube</b><small>Video, title, description, privacy and optional thumbnail.</small></span></div><div><X size={18}/><span><b>X</b><small>Text, image, GIF or video. Keep text within 280 characters.</small></span></div><div className="muted"><AlertCircle size={18}/><span><b>Instagram & Facebook</b><small>Visible for roadmap clarity, but unavailable until Meta is configured.</small></span></div></div><button className="publish-button" onClick={() => setHelpOpen(false)}>Got it</button></section></div>}
     </div>
   );
