@@ -10,7 +10,7 @@ import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { encryptJson, signState, verifyState } from './crypto.js';
 import { exchangeGoogleCode, getYouTubeChannel, youtubeAuthorizationUrl } from './google.js';
-import { uploadThumbnail, uploadVideoResumable, validAccessToken } from './youtube-upload.js';
+import { uploadThumbnail, uploadVideoResumable, validAccessToken, waitForVideoProcessing } from './youtube-upload.js';
 
 const required = [
   'FRONTEND_URL', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY',
@@ -94,6 +94,20 @@ async function processYouTubeUpload(job, connection, files, fields) {
         console.warn('YouTube thumbnail skipped:', error.message);
         job.warning = `Video published, but YouTube rejected the custom thumbnail: ${error.message}`;
       }
+    }
+    job.state = 'processing';
+    job.progress = 99;
+    job.message = 'Processing on YouTube';
+    const processing = await waitForVideoProcessing(accessToken, video.id, status => {
+      job.state = 'processing';
+      job.progress = status.percent ?? 99;
+      job.message = status.percent
+        ? `Processing on YouTube (${status.percent}%)`
+        : 'Processing on YouTube';
+    });
+    if (!processing.processed) {
+      job.warning = [job.warning, 'YouTube is still processing this video. Check YouTube Studio for final status.']
+        .filter(Boolean).join(' ');
     }
     job.state = 'completed';
     job.progress = 100;

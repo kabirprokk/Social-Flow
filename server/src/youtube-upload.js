@@ -118,3 +118,33 @@ export async function uploadThumbnail(accessToken, videoId, thumbnail) {
   );
   if (!response.ok) throw await googleError(response, 'Video uploaded, but the custom thumbnail failed');
 }
+
+export async function waitForVideoProcessing(accessToken, videoId, onStatus) {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=${encodeURIComponent(videoId)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!response.ok) throw await googleError(response, 'Unable to read YouTube processing status');
+    const video = (await response.json()).items?.[0];
+    if (!video) throw new Error('The uploaded video could not be found during processing');
+
+    const uploadStatus = video.status?.uploadStatus;
+    const processingStatus = video.processingDetails?.processingStatus;
+    const progress = video.processingDetails?.processingProgress;
+    let percent = null;
+    if (progress?.partsTotal && progress?.partsProcessed) {
+      percent = Math.min(99, Math.round((Number(progress.partsProcessed) / Number(progress.partsTotal)) * 100));
+    }
+    onStatus({ uploadStatus, processingStatus, percent });
+
+    if (processingStatus === 'succeeded' || uploadStatus === 'processed') return { processed: true };
+    if (['failed', 'terminated'].includes(processingStatus) || ['failed', 'rejected'].includes(uploadStatus)) {
+      const reason = video.status?.failureReason || video.status?.rejectionReason || processingStatus || uploadStatus;
+      throw new Error(`YouTube could not process the video: ${reason}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 8000));
+  }
+  return { processed: false };
+}
