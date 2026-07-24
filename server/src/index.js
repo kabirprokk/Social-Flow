@@ -8,9 +8,10 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
-import { encryptJson, signState, verifyState } from './crypto.js';
+import { decryptJson, encryptJson, signState, verifyState } from './crypto.js';
 import { exchangeGoogleCode, getYouTubeChannel, youtubeAuthorizationUrl } from './google.js';
 import { uploadThumbnail, uploadVideoResumable, validAccessToken, waitForVideoProcessing } from './youtube-upload.js';
+import { createPkcePair, exchangeXCode, getXUser, xAuthorizationUrl } from './x.js';
 
 const required = [
   'FRONTEND_URL', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY',
@@ -221,6 +222,59 @@ app.get('/api/oauth/youtube/callback', async (req, res) => {
     returnUrl.searchParams.set('connected', 'youtube');
   } catch (error) {
     console.error('YouTube OAuth callback failed:', error.message);
+    returnUrl.searchParams.set('oauth_error', error.message);
+  }
+  res.redirect(returnUrl.toString());
+});
+
+app.post('/api/oauth/x/start', requireUser, (_req, res) => {
+  if (!process.env.X_CLIENT_ID || !process.env.X_CLIENT_SECRET || !process.env.X_REDIRECT_URI) {
+    return res.status(503).json({ error: 'X OAuth is not configured yet' });
+  }
+  const pkce = createPkcePair();
+  const state = signState({
+    userId: _req.user.id,
+    nonce: crypto.randomUUID(),
+    pkce: encryptJson({ verifier: pkce.verifier }),
+    exp: Date.now() + 10 * 60 * 1000
+  });
+  res.json({ url: xAuthorizationUrl(state, pkce.challenge) });
+});
+
+app.get('/api/oauth/x/callback', async (req, res) => {
+  const returnUrl = new URL(process.env.FRONTEND_URL);
+  try {
+    if (!process.env.X_CLIENT_ID || !process.env.X_CLIENT_SECRET || !process.env.X_REDIRECT_URI) {
+      throw new Error('X OAuth is not configured yet');
+    }
+    if (req.query.error) throw new Error(String(req.query.error_description || req.query.error));
+    const state = verifyState(req.query.state);
+    const { verifier } = decryptJson(state.pkce);
+    const tokens = await exchangeXCode(String(req.query.code || ''), verifier);
+    const account = await getXUser(tokens.access_token);
+    const expiresAt = tokens.expires_in
+      ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
+      : null;
+
+    const { error } = await supabase.from('platform_connections').upsert({
+      user_id: state.userId,
+      platform: 'x',
+      platform_account_id: account.id,
+      account_name: account.name,
+      avatar_url: account.avatar_url,
+      encrypted_tokens: encryptJson({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_type: tokens.token_type,
+        scope: tokens.scope
+      }),
+      token_expires_at: expiresAt,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id,platform,platform_account_id' });
+    if (error) throw error;
+    returnUrl.searchParams.set('connected', 'x');
+  } catch (error) {
+    console.error('X OAuth callback failed:', error.message);
     returnUrl.searchParams.set('oauth_error', error.message);
   }
   res.redirect(returnUrl.toString());
