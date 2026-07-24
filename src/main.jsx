@@ -16,6 +16,7 @@ const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabase
 
 const Youtube = ({ size = 18 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z"/></svg>;
 const Instagram = ({ size = 18 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>;
+const Google = ({ size = 18 }) => <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.4Z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1a5.8 5.8 0 0 1-5.5-4H3.2v2.6A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.5 14a6 6 0 0 1 0-3.9V7.5H3.2a10 10 0 0 0 0 9.1L6.5 14Z"/><path fill="#EA4335" d="M12 6.1c1.5 0 2.8.5 3.8 1.5l2.9-2.8A9.7 9.7 0 0 0 3.2 7.5l3.3 2.6a5.8 5.8 0 0 1 5.5-4Z"/></svg>;
 
 const ACCOUNTS = [
   { id: 'youtube', name: 'YouTube', handle: 'Social Flow Studio', icon: Youtube, tone: 'red', audience: 'Public' },
@@ -66,6 +67,25 @@ function AuthScreen() {
     setBusy(false);
   };
 
+  const signInWithGoogle = async () => {
+    setBusy(true); setError(''); setMessage('');
+    if (!supabase) {
+      setError('Authentication is not configured on this deployment.');
+      setBusy(false); return;
+    }
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { prompt: 'select_account' }
+      }
+    });
+    if (oauthError) {
+      setError(oauthError.message);
+      setBusy(false);
+    }
+  };
+
   return <div className="auth-page">
     <div className="auth-glow one" /><div className="auth-glow two" />
     <div className="auth-brand"><Brand /><span>Publish with clarity.</span></div>
@@ -73,6 +93,8 @@ function AuthScreen() {
       <div className="auth-kicker"><Sparkles size={14}/> Your publishing workspace</div>
       <h1>{mode === 'login' ? 'Welcome back.' : 'Start your flow.'}</h1>
       <p>{mode === 'login' ? 'Sign in to create and publish your next post.' : 'Create an account to publish everywhere from one place.'}</p>
+      <button className="google-auth-button" type="button" disabled={busy} onClick={signInWithGoogle}><Google/>{mode === 'login' ? 'Continue with Google' : 'Sign up with Google'}</button>
+      <div className="auth-divider"><span>or continue with email</span></div>
       <form onSubmit={submit}>
         <label><span>Email address</span><div><Mail size={17}/><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com"/></div></label>
         <label><span>Password</span><div><LockKeyhole size={17}/><input type="password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 6 characters"/></div></label>
