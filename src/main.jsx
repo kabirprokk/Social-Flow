@@ -221,25 +221,95 @@ function App() {
     };
     xhr.send(form);
   });
+  const pollXJob = async jobId => {
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await fetch(`${apiUrl}/api/x/posts/${jobId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to read X publishing status');
+      const job = data.job;
+      setResults(current => ({
+        ...current,
+        x: {
+          progress: Math.max(30, Math.round(30 + job.progress * .7)),
+          state: job.state === 'completed' ? 'published' : job.state,
+          message: job.message,
+          url: job.url
+        }
+      }));
+      if (job.state === 'completed') return job;
+      if (job.state === 'failed') throw new Error(job.message || 'X publishing failed');
+    }
+  };
+  const uploadToX = () => new Promise((resolve, reject) => {
+    const form = new FormData();
+    if (file?.raw) form.append('media', file.raw);
+    form.append('text', `${caption}\n\n${hashtags}`.trim());
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${apiUrl}/api/x/posts`);
+    xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+    xhr.upload.onprogress = event => {
+      if (!event.lengthComputable) return;
+      const progress = Math.max(2, Math.round((event.loaded / event.total) * 28));
+      setResults(current => ({ ...current, x: { progress, state: 'uploading', message: 'Sending post securely' } }));
+    };
+    xhr.onerror = () => reject(new Error('The post could not reach the Social Flow API'));
+    xhr.onload = async () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(data.error || 'X publishing could not be started'));
+        return;
+      }
+      try { resolve(await pollXJob(data.job.id)); } catch (error) { reject(error); }
+    };
+    xhr.send(form);
+  });
   const publishEverywhere = async () => {
     setPublishing(true);
-    const initial = Object.fromEntries(selected.map(id => [id, id === 'youtube'
-      ? { progress: 1, state: 'uploading', message: 'Starting upload' }
-      : { progress: 0, state: 'failed', message: 'Publishing integration is not available yet' }
-    ]));
+    const supported = ['youtube', 'x'];
+    const initial = Object.fromEntries(selected.map(id => [id, supported.includes(id)
+      ? { progress: 1, state: 'uploading', message: 'Starting publish' }
+      : { progress: 0, state: 'failed', message: 'Publishing integration is not available yet' }]));
     setResults(initial);
     try {
       if (!apiUrl) throw new Error('The secure API is not configured');
-      if (!file?.raw) throw new Error('Choose a video before publishing');
-      if (!file.type.startsWith('video/')) throw new Error('YouTube publishing requires a video file');
-      if (!connections.some(c => c.platform === 'youtube')) throw new Error('Connect a YouTube channel first');
-      if (!selected.includes('youtube')) throw new Error('Select YouTube as a destination');
-      await uploadToYouTube();
+      const tasks = [];
+      if (selected.includes('youtube')) {
+        tasks.push((async () => {
+          try {
+            if (!file?.raw || !file.type.startsWith('video/')) throw new Error('YouTube publishing requires a video file');
+            if (!connections.some(c => c.platform === 'youtube')) throw new Error('Connect a YouTube channel first');
+            await uploadToYouTube();
+          } catch (error) {
+            setResults(current => ({ ...current, youtube: { ...(current.youtube || {}), state: 'failed', message: error.message } }));
+          }
+        })());
+      }
+      if (selected.includes('x')) {
+        tasks.push((async () => {
+          try {
+            const xText = `${caption}\n\n${hashtags}`.trim();
+            if (!xText) throw new Error('Write some text before publishing to X');
+            if (Array.from(xText).length > 280) throw new Error(`X post is ${Array.from(xText).length} characters; the limit is 280`);
+            if (!connections.some(c => c.platform === 'x')) throw new Error('Connect an X account first');
+            await uploadToX();
+          } catch (error) {
+            setResults(current => ({ ...current, x: { ...(current.x || {}), state: 'failed', message: error.message } }));
+          }
+        })());
+      }
+      if (!tasks.length) throw new Error('Select YouTube or X to publish');
+      await Promise.all(tasks);
     } catch (error) {
-      setResults(current => ({
-        ...current,
-        youtube: { ...(current.youtube || {}), state: 'failed', message: error.message }
-      }));
+      setResults(current => Object.fromEntries(Object.entries(current).map(([id, result]) => [
+        id,
+        supported.includes(id) && result.state !== 'published'
+          ? { ...result, state: 'failed', message: error.message }
+          : result
+      ])));
     } finally {
       setPublishing(false);
     }
@@ -313,7 +383,7 @@ function App() {
                     const r = results[a.id];
                     return <React.Fragment key={a.id}><div className="destination"><PlatformIcon account={a} size={15}/><div><b>{a.name}</b>{r && <span className="progress-track"><i className={r.state === 'failed' ? 'failed' : ''} style={{width: `${r.state === 'failed' ? 100 : r.progress}%`}} /></span>}</div><small title={r?.message || ''} className={r?.state || ''}>{r ? (r.state === 'published' ? 'Published' : r.state === 'failed' ? 'Failed' : `${r.progress}%`) : 'Ready'}</small></div>{r?.url && <a className="result-link" href={r.url} target="_blank" rel="noreferrer">View published video <ArrowUpRight size={12}/></a>}{r?.warning && <p className="result-warning">{r.warning}</p>}{r?.state === 'failed' && <p className="result-error">{r.message}</p>}</React.Fragment>
                   }) : <div className="empty-state">Choose at least one destination</div>}</div>
-                  <button className="publish-button" disabled={!selected.length || publishing || !file} onClick={publishEverywhere}>{publishing ? <><span className="spinner"/> Publishing…</> : <><Upload size={17}/> Publish selected</>}</button>
+                  <button className="publish-button" disabled={!selected.length || publishing || (!file && !selected.includes('x'))} onClick={publishEverywhere}>{publishing ? <><span className="spinner"/> Publishing…</> : <><Upload size={17}/> Publish selected</>}</button>
                   <p className="secure-note"><CheckCircle2 size={13}/> Posted securely to each platform</p>
                 </div>
                 <div className="tip-card"><Sparkles size={16}/><div><b>{savedKey ? 'AI assistance is on' : 'Make every word count'}</b><p>{savedKey ? 'Use AI to refine your title, caption, and hashtags.' : 'Connect your AI key for smarter captions and hashtag suggestions.'}</p>{!savedKey && <button onClick={() => setView('ai')}>Set up AI <ArrowUpRight size={13}/></button>}</div></div>

@@ -12,6 +12,7 @@ import { decryptJson, encryptJson, signState, verifyState } from './crypto.js';
 import { exchangeGoogleCode, getYouTubeChannel, youtubeAuthorizationUrl } from './google.js';
 import { uploadThumbnail, uploadVideoResumable, validAccessToken, waitForVideoProcessing } from './youtube-upload.js';
 import { createPkcePair, exchangeXCode, getXUser, xAuthorizationUrl } from './x.js';
+import { createXPost, uploadXMedia, validXAccessToken } from './x-publish.js';
 
 const required = [
   'FRONTEND_URL', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY',
@@ -169,6 +170,87 @@ app.post('/api/youtube/uploads', requireUser, upload.fields([
 app.get('/api/youtube/uploads/:id', requireUser, (req, res) => {
   const job = uploadJobs.get(req.params.id);
   if (!job || job.userId !== req.user.id) return res.status(404).json({ error: 'Upload job not found' });
+  res.json({ job });
+});
+
+async function processXPost(job, connection, file, text) {
+  try {
+    job.state = 'preparing';
+    job.message = 'Preparing X post';
+    const accessToken = await validXAccessToken(supabase, connection);
+    let mediaId = null;
+    if (file) {
+      job.state = 'uploading';
+      job.message = 'Uploading media to X';
+      mediaId = await uploadXMedia(accessToken, file, progress => { job.progress = progress; });
+    }
+    job.state = 'publishing';
+    job.progress = 99;
+    job.message = 'Creating post on X';
+    const post = await createXPost(accessToken, text, mediaId);
+    job.state = 'completed';
+    job.progress = 100;
+    job.message = 'Published to X';
+    job.postId = post.id;
+    job.url = `https://x.com/i/status/${post.id}`;
+    job.completedAt = Date.now();
+  } catch (error) {
+    console.error('X publishing failed:', error.message);
+    job.state = 'failed';
+    job.message = error.message;
+    job.completedAt = Date.now();
+  } finally {
+    if (file?.path) await fs.unlink(file.path).catch(() => {});
+  }
+}
+
+app.post('/api/x/posts', requireUser, upload.single('media'), async (req, res) => {
+  const text = String(req.body.text || '').trim();
+  if (!text) {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: 'Post text is required' });
+  }
+  if (Array.from(text).length > 280) {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: 'X post text must be 280 characters or fewer' });
+  }
+  if (req.file) {
+    const isImage = req.file.mimetype.startsWith('image/');
+    const isVideo = req.file.mimetype.startsWith('video/');
+    const maxSize = isVideo ? 512 * 1024 * 1024 : req.file.mimetype === 'image/gif' ? 15 * 1024 * 1024 : 5 * 1024 * 1024;
+    if ((!isImage && !isVideo) || req.file.size > maxSize) {
+      await fs.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({ error: `Unsupported X media file or size. Maximum allowed: ${Math.round(maxSize / 1024 / 1024)} MB` });
+    }
+  }
+
+  const { data: connection, error } = await supabase
+    .from('platform_connections')
+    .select('*')
+    .eq('user_id', req.user.id)
+    .eq('platform', 'x')
+    .limit(1)
+    .maybeSingle();
+  if (error || !connection) {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    return res.status(409).json({ error: 'Connect an X account before publishing' });
+  }
+
+  const id = crypto.randomUUID();
+  const job = {
+    id, userId: req.user.id, platform: 'x',
+    state: 'queued', progress: 0, message: 'Post queued', createdAt: Date.now()
+  };
+  uploadJobs.set(id, job);
+  res.status(202).json({ job });
+  void processXPost(job, connection, req.file, text);
+});
+
+app.get('/api/x/posts/:id', requireUser, (req, res) => {
+  const job = uploadJobs.get(req.params.id);
+  if (!job || job.userId !== req.user.id || job.platform !== 'x') {
+    return res.status(404).json({ error: 'X publishing job not found' });
+  }
   res.json({ job });
 });
 
