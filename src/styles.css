@@ -113,3 +113,30 @@ main{background:transparent}
 .auth-secure{display:flex;align-items:center;justify-content:center;gap:5px;color:#5f6d66;font-size:8px;margin-top:20px}.auth-alert{border-radius:9px;padding:9px 10px;font-size:10px;line-height:1.4;margin:10px 0}.auth-alert.error{background:#35191b;border:1px solid #673034;color:#ff9b9f}.auth-alert.success{background:#143122;border:1px solid #28573d;color:#8eebb3;display:flex;gap:7px;align-items:flex-start}
 .auth-loader{min-height:100vh;display:flex;align-items:center;justify-content:center;gap:14px;background:#080d0b}.auth-loader>.spinner{border-color:#36e28c33;border-top-color:#36e28c}
 @media(max-width:540px){.auth-page{padding:80px 15px 24px}.auth-brand{left:20px;top:21px}.auth-brand>span{display:none}.auth-card{padding:28px 21px;border-radius:18px}.auth-card h1{font-size:26px}}
+
+/* Product-quality UX pass */
+.topbar{box-shadow:0 1px 0 #ffffff04}
+.page{animation:page-in .28s ease both}
+@keyframes page-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.compose-card{overflow:hidden}
+.account-option{min-height:58px;position:relative;transition:border-color .18s,background .18s,transform .18s}
+.account-option:not(.unavailable):hover{transform:translateY(-1px)}
+.account-option.unavailable{opacity:.62;background:#0d1511;border-style:dashed}
+.account-option.unavailable:hover{opacity:.86;border-color:#3a4a42}
+.lock-state{min-width:30px;height:20px;padding:0 6px;border-radius:20px;background:#202b26;color:#84928b;font-size:8px;font-style:normal;display:grid;place-items:center}
+.draft-state{min-width:112px;justify-content:flex-end}.draft-state.saved{color:#7fcf9f}.mini-spinner{width:10px;height:10px;border:1.5px solid #68776f;border-top-color:#b9d9c8;border-radius:50%;animation:spin .7s linear infinite}
+.status-dot.offline{color:#d88b8e}.status-dot.offline i{background:#dc6268;box-shadow:0 0 9px #dc6268}
+.platform-limit{display:flex;align-items:center;gap:7px;background:#111b16;border:1px solid #293831;border-radius:9px;padding:9px 11px;margin:12px 0;color:#8da098;font-size:10px}.platform-limit span{flex:1}.platform-limit b{font-size:10px;color:#a9f0c5}.platform-limit.over{border-color:#69383a;background:#271719}.platform-limit.over b{color:#ff8f94}
+.publish-panel{position:sticky;top:105px}
+.destination>small{max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.danger-action{color:#e28d90!important;border-color:#563336!important}.danger-action:hover{background:#2c1819!important;border-color:#8b484c!important}
+.modal-backdrop{position:fixed;inset:0;z-index:100;background:#020604c7;backdrop-filter:blur(8px);display:grid;place-items:center;padding:20px;animation:fade-in .18s ease}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+.help-modal{width:min(100%,490px);position:relative;background:linear-gradient(145deg,#142019,#0d1511);border:1px solid #304139;border-radius:22px;padding:31px;box-shadow:0 35px 100px #000b}
+.help-modal>.page-icon{margin:0 0 15px}.help-modal h2{font:600 22px Manrope;margin:0}.help-modal>p{font-size:11px;line-height:1.6;color:#8f9d96;margin:8px 0 21px}.modal-close{position:absolute;right:18px;top:18px;width:32px;height:32px;border:1px solid #2b3a33;border-radius:9px;background:#101914;color:#8d9a93;display:grid;place-items:center}
+.help-grid{display:grid;gap:8px;margin-bottom:20px}.help-grid>div{display:flex;gap:11px;align-items:flex-start;background:#111b16;border:1px solid #26362e;border-radius:11px;padding:12px;color:#6ce9a5}.help-grid>div.muted{color:#829089}.help-grid span{display:flex;flex-direction:column}.help-grid b{color:#e8f0eb;font-size:11px}.help-grid small{color:#829089;font-size:9px;line-height:1.45;margin-top:3px}
+.help-modal>.publish-button{width:auto;padding:0 22px;margin-left:auto}
+.file-preview{transition:border-color .18s}.file-preview:hover{border-color:#3e584b}
+.publish-button{transition:transform .18s,filter .18s,opacity .18s}
+@media(max-width:900px){.publish-panel{position:static}.help-modal{padding:25px}}
+@media(max-width:620px){.account-option{min-height:62px}.intro{margin-bottom:20px}.help-modal{padding:23px 18px}.draft-state{display:none}.modal-close{right:13px;top:13px}}

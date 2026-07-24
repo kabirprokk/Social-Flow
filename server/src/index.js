@@ -62,6 +62,19 @@ app.get('/api/connections', requireUser, async (req, res) => {
   res.json({ connections: data });
 });
 
+app.delete('/api/connections/:id', requireUser, async (req, res) => {
+  const { data, error } = await supabase
+    .from('platform_connections')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id)
+    .select('id, platform')
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: 'Unable to disconnect this account' });
+  if (!data) return res.status(404).json({ error: 'Connected account not found' });
+  res.json({ disconnected: data });
+});
+
 async function removeUploadFiles(files) {
   const paths = Object.values(files || {}).flat().map(file => file.path);
   await Promise.all(paths.map(filePath => fs.unlink(filePath).catch(() => {})));
