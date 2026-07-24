@@ -3,9 +3,14 @@ import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import multer from 'multer';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { encryptJson, signState, verifyState } from './crypto.js';
 import { exchangeGoogleCode, getYouTubeChannel, youtubeAuthorizationUrl } from './google.js';
+import { uploadThumbnail, uploadVideoResumable, validAccessToken } from './youtube-upload.js';
 
 const required = [
   'FRONTEND_URL', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY',
@@ -18,6 +23,11 @@ const app = express();
 const port = Number(process.env.PORT || 10000);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
+});
+const uploadJobs = new Map();
+const upload = multer({
+  dest: path.join(os.tmpdir(), 'social-flow-uploads'),
+  limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 2 }
 });
 
 app.set('trust proxy', 1);
@@ -49,6 +59,105 @@ app.get('/api/connections', requireUser, async (req, res) => {
   if (error) return res.status(500).json({ error: 'Unable to load connected accounts' });
   res.json({ connections: data });
 });
+
+async function removeUploadFiles(files) {
+  const paths = Object.values(files || {}).flat().map(file => file.path);
+  await Promise.all(paths.map(filePath => fs.unlink(filePath).catch(() => {})));
+}
+
+async function processYouTubeUpload(job, connection, files, fields) {
+  try {
+    job.state = 'preparing';
+    job.message = 'Preparing secure YouTube upload';
+    const accessToken = await validAccessToken(supabase, connection);
+    job.state = 'uploading';
+    job.message = 'Uploading to YouTube';
+    const video = await uploadVideoResumable({
+      accessToken,
+      file: files.video[0],
+      metadata: {
+        title: fields.title,
+        description: fields.description || '',
+        tags: String(fields.tags || '').split(/[,\s#]+/).filter(Boolean).slice(0, 30),
+        privacy: ['public', 'private', 'unlisted'].includes(fields.privacy) ? fields.privacy : 'private'
+      },
+      onProgress: progress => { job.progress = progress; }
+    });
+    if (files.thumbnail?.[0]) {
+      job.state = 'processing';
+      job.message = 'Setting custom thumbnail';
+      await uploadThumbnail(accessToken, video.id, files.thumbnail[0]);
+    }
+    job.state = 'completed';
+    job.progress = 100;
+    job.message = 'Published to YouTube';
+    job.videoId = video.id;
+    job.url = `https://www.youtube.com/watch?v=${video.id}`;
+    job.completedAt = Date.now();
+  } catch (error) {
+    console.error('YouTube upload failed:', error.message);
+    job.state = 'failed';
+    job.message = error.message;
+    job.completedAt = Date.now();
+  } finally {
+    await removeUploadFiles(files);
+  }
+}
+
+app.post('/api/youtube/uploads', requireUser, upload.fields([
+  { name: 'video', maxCount: 1 },
+  { name: 'thumbnail', maxCount: 1 }
+]), async (req, res) => {
+  const video = req.files?.video?.[0];
+  if (!video) return res.status(400).json({ error: 'A video file is required' });
+  if (!video.mimetype.startsWith('video/')) {
+    await removeUploadFiles(req.files);
+    return res.status(400).json({ error: 'YouTube publishing currently requires a video file' });
+  }
+  if (!String(req.body.title || '').trim()) {
+    await removeUploadFiles(req.files);
+    return res.status(400).json({ error: 'A YouTube title is required' });
+  }
+  const thumbnail = req.files?.thumbnail?.[0];
+  if (thumbnail && (!thumbnail.mimetype.startsWith('image/') || thumbnail.size > 2 * 1024 * 1024)) {
+    await removeUploadFiles(req.files);
+    return res.status(400).json({ error: 'Thumbnail must be an image no larger than 2 MB' });
+  }
+
+  const { data: connection, error } = await supabase
+    .from('platform_connections')
+    .select('*')
+    .eq('user_id', req.user.id)
+    .eq('platform', 'youtube')
+    .limit(1)
+    .maybeSingle();
+  if (error || !connection) {
+    await removeUploadFiles(req.files);
+    return res.status(409).json({ error: 'Connect a YouTube channel before publishing' });
+  }
+
+  const id = crypto.randomUUID();
+  const job = {
+    id, userId: req.user.id, platform: 'youtube',
+    state: 'queued', progress: 0, message: 'Upload queued', createdAt: Date.now()
+  };
+  uploadJobs.set(id, job);
+  res.status(202).json({ job });
+  void processYouTubeUpload(job, connection, req.files, req.body);
+});
+
+app.get('/api/youtube/uploads/:id', requireUser, (req, res) => {
+  const job = uploadJobs.get(req.params.id);
+  if (!job || job.userId !== req.user.id) return res.status(404).json({ error: 'Upload job not found' });
+  res.json({ job });
+});
+
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const [id, job] of uploadJobs) {
+    if (job.completedAt && job.completedAt < cutoff) uploadJobs.delete(id);
+  }
+}, 10 * 60 * 1000).unref();
 
 app.post('/api/oauth/youtube/start', requireUser, (req, res) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REDIRECT_URI) {

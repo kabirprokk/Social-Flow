@@ -91,6 +91,8 @@ function App() {
   const [caption, setCaption] = useState("A little reminder: the best ideas don't need to be loud. They just need room to grow. 🌿");
   const [title, setTitle] = useState('Make space for better ideas');
   const [hashtags, setHashtags] = useState('#creativity #mindset #growth');
+  const [privacy, setPrivacy] = useState('private');
+  const [thumbnail, setThumbnail] = useState(null);
   const [publishing, setPublishing] = useState(false);
   const [results, setResults] = useState({});
   const [aiKey, setAiKey] = useState('');
@@ -101,6 +103,7 @@ function App() {
   const [connectionBusy, setConnectionBusy] = useState('');
   const [connectionMessage, setConnectionMessage] = useState('');
   const inputRef = useRef();
+  const thumbnailRef = useRef();
 
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return; }
@@ -138,31 +141,8 @@ function App() {
     }
   }, [session]);
 
-  useEffect(() => {
-    if (!publishing) return;
-    const ids = selected;
-    setResults(Object.fromEntries(ids.map(id => [id, { progress: 8, state: 'uploading' }])));
-    const timer = setInterval(() => {
-      setResults(current => {
-        let done = true;
-        const next = { ...current };
-        ids.forEach((id, i) => {
-          const item = next[id] || { progress: 0, state: 'uploading' };
-          if (item.progress < 100) {
-            done = false;
-            const progress = Math.min(100, item.progress + 9 + i * 2);
-            next[id] = { progress, state: progress === 100 ? 'published' : 'uploading' };
-          }
-        });
-        if (done) { clearInterval(timer); setPublishing(false); }
-        return next;
-      });
-    }, 320);
-    return () => clearInterval(timer);
-  }, [publishing]);
-
   const toggle = id => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
-  const loadFile = f => f && setFile({ name: f.name, size: `${(f.size / 1024 / 1024).toFixed(1)} MB`, type: f.type, url: f.type.startsWith('image') ? URL.createObjectURL(f) : null });
+  const loadFile = f => f && setFile({ raw: f, name: f.name, size: `${(f.size / 1024 / 1024).toFixed(1)} MB`, type: f.type, url: f.type.startsWith('image') ? URL.createObjectURL(f) : null });
   const improve = () => {
     if (!savedKey) return;
     setCaption("Give your best ideas the space they deserve. Quiet the noise, stay curious, and let meaningful work take root. 🌿");
@@ -187,6 +167,79 @@ function App() {
     } catch (error) {
       setConnectionMessage(error.message);
       setConnectionBusy('');
+    }
+  };
+  const pollYouTubeJob = async jobId => {
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      const response = await fetch(`${apiUrl}/api/youtube/uploads/${jobId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to read YouTube upload status');
+      const job = data.job;
+      setResults(current => ({
+        ...current,
+        youtube: {
+          progress: Math.max(30, Math.round(30 + job.progress * .7)),
+          state: job.state === 'completed' ? 'published' : job.state,
+          message: job.message,
+          url: job.url
+        }
+      }));
+      if (job.state === 'completed') return job;
+      if (job.state === 'failed') throw new Error(job.message || 'YouTube upload failed');
+    }
+  };
+  const uploadToYouTube = () => new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append('video', file.raw);
+    if (thumbnail?.raw) form.append('thumbnail', thumbnail.raw);
+    form.append('title', title);
+    form.append('description', `${caption}\n\n${hashtags}`.trim());
+    form.append('tags', hashtags);
+    form.append('privacy', privacy);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${apiUrl}/api/youtube/uploads`);
+    xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+    xhr.upload.onprogress = event => {
+      if (!event.lengthComputable) return;
+      const progress = Math.max(2, Math.round((event.loaded / event.total) * 28));
+      setResults(current => ({ ...current, youtube: { progress, state: 'uploading', message: 'Sending video securely' } }));
+    };
+    xhr.onerror = () => reject(new Error('The video could not reach the Social Flow API'));
+    xhr.onload = async () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(data.error || 'YouTube upload could not be started'));
+        return;
+      }
+      try { resolve(await pollYouTubeJob(data.job.id)); } catch (error) { reject(error); }
+    };
+    xhr.send(form);
+  });
+  const publishEverywhere = async () => {
+    setPublishing(true);
+    const initial = Object.fromEntries(selected.map(id => [id, id === 'youtube'
+      ? { progress: 1, state: 'uploading', message: 'Starting upload' }
+      : { progress: 0, state: 'failed', message: 'Publishing integration is not available yet' }
+    ]));
+    setResults(initial);
+    try {
+      if (!apiUrl) throw new Error('The secure API is not configured');
+      if (!file?.raw) throw new Error('Choose a video before publishing');
+      if (!file.type.startsWith('video/')) throw new Error('YouTube publishing requires a video file');
+      if (!connections.some(c => c.platform === 'youtube')) throw new Error('Connect a YouTube channel first');
+      if (!selected.includes('youtube')) throw new Error('Select YouTube as a destination');
+      await uploadToYouTube();
+    } catch (error) {
+      setResults(current => ({
+        ...current,
+        youtube: { ...(current.youtube || {}), state: 'failed', message: error.message }
+      }));
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -249,16 +302,16 @@ function App() {
                 <label className="field"><span>Title <small>YouTube & Facebook</small></span><input value={title} onChange={e => setTitle(e.target.value)} maxLength={100}/><i>{title.length}/100</i></label>
                 <label className="field"><span>Caption / description</span><textarea value={caption} onChange={e => setCaption(e.target.value)} maxLength={2200}/><i>{caption.length}/2,200</i></label>
                 <label className="field hashtag-field"><span>Hashtags</span><Hash size={16}/><input value={hashtags.replaceAll('#','')} onChange={e => setHashtags(e.target.value.split(' ').map(x => x ? `#${x.replace('#','')}` : '').join(' '))}/></label>
-                <div className="settings-row"><button><Eye size={16}/><span><small>Audience</small><b>Public</b></span><ChevronDown size={15}/></button><button><FileImage size={16}/><span><small>Thumbnail</small><b>Auto-generated</b></span><ChevronDown size={15}/></button></div>
+                <div className="settings-row"><label className="setting-control"><Eye size={16}/><span><small>Audience</small><select value={privacy} onChange={e => setPrivacy(e.target.value)}><option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option></select></span><ChevronDown size={15}/></label><button onClick={() => thumbnailRef.current.click()}><FileImage size={16}/><span><small>Thumbnail</small><b>{thumbnail ? thumbnail.name : 'Auto-generated'}</b></span><ChevronDown size={15}/></button><input ref={thumbnailRef} type="file" accept="image/jpeg,image/png" hidden onChange={e => {const f=e.target.files[0]; if(f)setThumbnail({raw:f,name:f.name})}}/></div>
               </section>
 
               <aside className="publish-panel">
                 <div className="summary card"><div className="summary-head"><div><h3>Ready to publish?</h3><p>{selected.length} destination{selected.length !== 1 ? 's' : ''} selected</p></div><Send size={20}/></div>
                   <div className="destination-list">{selected.length ? ACCOUNTS.filter(a => selected.includes(a.id)).map(a => {
                     const r = results[a.id];
-                    return <div className="destination" key={a.id}><PlatformIcon account={a} size={15}/><div><b>{a.name}</b>{r && <span className="progress-track"><i style={{width: `${r.progress}%`}} /></span>}</div><small className={r?.state || ''}>{r ? (r.state === 'published' ? 'Published' : `${r.progress}%`) : 'Ready'}</small></div>
+                    return <React.Fragment key={a.id}><div className="destination"><PlatformIcon account={a} size={15}/><div><b>{a.name}</b>{r && <span className="progress-track"><i className={r.state === 'failed' ? 'failed' : ''} style={{width: `${r.state === 'failed' ? 100 : r.progress}%`}} /></span>}</div><small title={r?.message || ''} className={r?.state || ''}>{r ? (r.state === 'published' ? 'Published' : r.state === 'failed' ? 'Failed' : `${r.progress}%`) : 'Ready'}</small></div>{r?.url && <a className="result-link" href={r.url} target="_blank" rel="noreferrer">View published video <ArrowUpRight size={12}/></a>}{r?.state === 'failed' && <p className="result-error">{r.message}</p>}</React.Fragment>
                   }) : <div className="empty-state">Choose at least one destination</div>}</div>
-                  <button className="publish-button" disabled={!selected.length || publishing} onClick={() => setPublishing(true)}>{publishing ? <><span className="spinner"/> Publishing…</> : <><Upload size={17}/> Publish everywhere</>}</button>
+                  <button className="publish-button" disabled={!selected.length || publishing || !file} onClick={publishEverywhere}>{publishing ? <><span className="spinner"/> Publishing…</> : <><Upload size={17}/> Publish selected</>}</button>
                   <p className="secure-note"><CheckCircle2 size={13}/> Posted securely to each platform</p>
                 </div>
                 <div className="tip-card"><Sparkles size={16}/><div><b>{savedKey ? 'AI assistance is on' : 'Make every word count'}</b><p>{savedKey ? 'Use AI to refine your title, caption, and hashtags.' : 'Connect your AI key for smarter captions and hashtag suggestions.'}</p>{!savedKey && <button onClick={() => setView('ai')}>Set up AI <ArrowUpRight size={13}/></button>}</div></div>
